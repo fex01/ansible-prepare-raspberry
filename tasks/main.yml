@@ -180,11 +180,11 @@
       line: "127.0.0.1{{'\t'}}{{ host_name }}"
       backup: true
       state: present
-  when: hostname_changed # test
+    when: hostname_changed # test
 
   - name: reboot host
     reboot:
-  when: hostname_changed # test
+    when: hostname_changed.changed
 # end block rename host
 
 - name: "set timezone to {{ localization_timezone }} & locale to {{ localization_default_locale }}"
