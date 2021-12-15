@@ -104,7 +104,7 @@
   - name: fail if ssh_public_keys is empty
     fail:
       msg: ssh_public_keys is empty!
-    when: {{ ssh_public_keys | first }} is undefined
+    when: ssh_public_keys | length == 0
 
   - name: provision root with ssh key
     authorized_key:
