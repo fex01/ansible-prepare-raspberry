@@ -3,6 +3,8 @@ prepare-raspberry
 
 Bootstrap and customize a Raspbian Lite system
 
+**Work In Progress**: I'm currently refactoring this role to be a standalone project, as such it's untested. If you are looking into a tested version have a look into [ansible-gitserver](https://github.com/fex01/ansible-gitserver.)
+
 ### It will:
 * rename user
   * rename the default user *pi* to *user_name*
