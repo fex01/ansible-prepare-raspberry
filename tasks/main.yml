@@ -180,7 +180,6 @@
       line: "127.0.0.1{{'\t'}}{{ host_name }}"
       backup: true
       state: present
-    when: hostname_changed # test
 
   - name: reboot host
     reboot:
