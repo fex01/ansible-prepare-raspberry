@@ -1,0 +1,323 @@
+---
+# tasks file for prepare-raspberry
+
+- name: set connection parameters
+  block:
+  # From localhost, check if we're able to reach {{ inventory_hostname }} on
+  # port 22
+  - name: Check if we're using the default SSH port
+    become: false
+    wait_for:
+      port: "22"
+      state: "started"
+      host: "{{ ansible_host | default(inventory_hostname) }}"
+      connect_timeout: "5"
+      timeout: "10"
+    delegate_to: "localhost"
+    ignore_errors: "yes"
+    register: default_ssh
+
+  # If reachable, continue the following tasks with this port
+  - name: Set inventory ansible_port to default
+    set_fact:
+      ansible_port: "22"
+    when: default_ssh is defined and
+          default_ssh.state is defined and
+          default_ssh.state == "started"
+    register: connection_default_port_set
+
+  # If unreachable on port 22, check if we're able to reach
+  # {{ inventory_hostname }} on {{ ssh_port }} provided by the configuration
+  # from localhost
+  - name: Check if we're using the custom SSH port
+    become: false
+    wait_for:
+      port: "{{ ssh_port }}"
+      state: "started"
+      host: "{{ ansible_host | default(inventory_hostname) }}"
+      connect_timeout: "5"
+      timeout: "10"
+    delegate_to: "localhost"
+    ignore_errors: "yes"
+    register: custom_ssh
+    when: default_ssh is defined and
+          default_ssh.state is undefined
+
+  # If {{ ssh_port }} is reachable, we set it as ansible_port
+  - name: Set ansible_port to custom port {{ ssh_port }}
+    set_fact:
+      ansible_port: "{{ ssh_port }}"
+    when: custom_ssh is defined and
+          custom_ssh.state is defined and
+          custom_ssh.state == "started"
+    register: ssh_port_set
+
+  # If the SSH port is neither the default or the configured, give up.
+  - name: Fail if SSH port was not auto-detected (unknown)
+    fail:
+      msg: "The SSH port is neither 22 or {{ ssh_port }}."
+    when: connection_default_port_set is defined and
+          connection_default_port_set.skipped is defined and
+          ssh_port_set is defined and
+          ssh_port_set.skipped is defined
+
+  # Set ansible_user to {{ connection_default_user }}
+  - name: Set ansible_user to {{ connection_default_user }}
+    set_fact:
+      ansible_user: "{{ connection_default_user }}"
+
+  # Test for the default or custom user
+  # First test connection with default user pi
+  - name: ping with default user {{ connection_default_user }}
+    ping:
+    register: default_user
+    ignore_unreachable: true
+
+  # If connection with connection_default_user failed set ansible_user to user_name
+  - name: Set ansible_user to {{ user_name }}
+    set_fact:
+      ansible_user: "{{ user_name }}"
+    when: default_user.ping is undefined
+
+  # and test the connection again
+  - name: ping with custom user {{user_name}}
+    ping:
+    register: custom_user
+    ignore_unreachable: true
+    when: default_user.ping is undefined
+
+  # If the user name is neither the default or the custom user name, give up.
+  - name: Fail if both {{ connection_default_user }} and {{user_name}} where not able to connect
+    fail:
+      msg: "Neither {{ connection_default_user }} nor {{user_name}} can connect."
+    when: default_user.ping is undefined and
+          custom_user.ping is undefined
+
+  # with validated connection parameters we can gather facts
+  - name: gather facts
+    gather_facts:
+# end block set connection parameters
+
+
+- name: provision root
+  block:
+  - name: fail if ssh_public_keys is empty
+    fail:
+      msg: ssh_public_keys is empty!
+    when: {{ ssh_public_keys | first }} is undefined
+
+  - name: provision root with ssh key
+    authorized_key:
+      user: root
+      key: '{{ ssh_public_keys | first }}'
+# end block provision root
+
+
+- name: rename user
+  block:
+  - name: set root as ansible_user
+    set_fact:
+      ansible_user: "root"
+
+  - name: test connection
+    ping:
+    register: connection_established
+    ignore_unreachable: true
+
+  - name: handle connection errors
+    block:
+      - name: rename user {{ connection_default_user }}
+        replace:
+          path: '{{ item }}'
+          regexp: '\b{{ connection_default_user }}\b'
+          replace: '{{ user_name }}'
+        with_items: '{{ username_files }}'
+
+      - name: check presence of '/home/{{ connection_default_user }}' directory
+        stat:
+          path: '/home/{{ connection_default_user }}'
+        register: old_home_dir
+
+      - name: move user home directory
+        command: 'mv /home/{{ connection_default_user }} /home/{{ user_name }}'
+        when: old_home_dir.stat.exists and not old_home_dir.stat.islnk
+
+      - name: check presence of '/home/{{ user_name }}' directory
+        stat:
+          path: '/home/{{ user_name }}'
+        register: new_home_dir
+
+      - name: symlink to old directory
+        file:
+          src: '/home/{{ user_name }}'
+          path: '/home/{{ connection_default_user }}'
+          state: 'link'
+        when: new_home_dir.stat.exists
+
+      - name: change user password
+        user:
+          name: '{{ user_name }}'
+          password: '{{ user_password_hash }}'
+        when: user_password_hash is defined
+    when: connection_established.ping is defined
+
+  - name: set {{ user_name }} as ansible_user
+    set_fact:
+      ansible_user: "{{ user_name }}"
+# end block rename user
+
+- name: rename host
+  block:
+  - name: change hostname to '{{ host_name }}'
+    hostname:
+      name: '{{ host_name }}'
+    register: hostname_changed
+
+  - name: update /etc/hosts
+    lineinfile:
+      dest: /etc/hosts
+      regexp: '^127\.0\.0\.1'
+      line: "127.0.0.1{{'\t'}}{{ host_name }}"
+      backup: true
+      state: present
+  when: hostname_changed # test
+
+  - name: reboot host
+    reboot:
+  when: hostname_changed # test
+# end block rename host
+
+- name: "set timezone to {{ localization_timezone }} & locale to {{ localization_default_locale }}"
+  include_role:
+    name: arillso.localization
+  vars:
+    localization_timezone_linux: "{{ localization_timezone }}"
+
+- name: "activate auto-updates / -upgrades"
+  include_role:
+    name: weareinteractive.apt
+
+- name: reboot after updates
+  reboot:
+
+- name: "write public SSH keys to *user_name*'s *authorized_keys* file"
+  include_role:
+    name: weareinteractive.users
+  vars:
+    users:
+      - username: "{{ user_name }}"
+        authorized_keys: "{{ ssh_public_keys }}"
+
+
+- name: ssh-server-config
+  block:
+  - name: fail when ssh_users is empty
+    fail:
+      msg: If you would run this role without defining an SSH user, you will no longer have SSH access to {{ inventory_hostname }}!
+    when: ssh_users | length == 0
+
+  - name: change default ssh port
+    lineinfile:
+      dest: "{{ ssh_sshd_config }}"
+      regexp: "^#?Port"
+      line: "Port {{ ssh_port }}"
+      state: present
+    notify:
+      - restart sshd
+
+  - name: disable ssh remote root login
+    lineinfile:
+      dest: "{{ ssh_sshd_config }}"
+      regexp: "^#?PermitRootLogin"
+      line: "PermitRootLogin no"
+      state: present
+    notify:
+      - restart sshd
+
+  - name: enable ssh strict mode
+    lineinfile:
+      dest: "{{ ssh_sshd_config }}"
+      regexp: "^#?StrictModes"
+      line: "StrictModes yes"
+      state: present
+    notify:
+      - restart sshd
+
+  - name: disable X11 forwarding
+    lineinfile:
+      dest: "{{ ssh_sshd_config }}"
+      regexp: "^#?X11Forwarding"
+      line: "X11Forwarding no"
+      state: present
+    notify:
+      - restart sshd
+
+  - name: disable ssh password login
+    lineinfile:
+      dest: "{{ ssh_sshd_config }}"
+      regexp: "{{ item.regexp }}"
+      line: "{{ item.line }}"
+      state: present
+    with_items:
+      - regexp: "^#?PasswordAuthentication"
+        line: "PasswordAuthentication no"
+      - regexp: "^#?ChallengeResponseAuthentication"
+        line: "ChallengeResponseAuthentication no"
+      - regexp: "^#?UsePAM"
+        line: "UsePAM no"
+      - regexp: "^#?PermitEmptyPasswords"
+        line: "PermitEmptyPasswords no"
+    notify:
+      - restart sshd
+
+  - name: set ssh allowed users to {{ ssh_users }}
+    lineinfile:
+      dest: "{{ ssh_sshd_config }}"
+      regexp: "^#?AllowUsers"
+      line: "AllowUsers {{ ssh_users | join(' ') }}"
+    notify:
+      - restart sshd
+
+  - name: add ssh banner info
+    lineinfile:
+      dest: "{{ ssh_sshd_config }}"
+      regexp: "^#?Banner"
+      line: "Banner /etc/issue.net"
+      state: present
+    notify:
+      - restart sshd
+
+  - name: update ssh banner
+    copy:
+      content: "{{ ssh_banner }}"
+      dest: /etc/issue.net
+    when: ssh_banner != None
+    notify:
+      - restart sshd
+
+  - name: set additional values
+    lineinfile:
+      dest: "{{ ssh_sshd_config }}"
+      regexp: "^#?{{ item.var_name }}"
+      line: "{{ item.var_name }} {{ item.value }}"
+      state: present
+    with_items: "{{ ssh_sshd_config_settings }}"
+    notify:
+      - restart sshd
+
+  # We notified "Restart sshd" if we modified the sshd config.
+  # By calling flush_handlers, we make sure the handler is run *right now*
+  - name: Ensure SSH is reloaded if need be
+    meta: flush_handlers
+
+    # We're done, make sure ansible_port is set properly so that any tasks
+  # after this use the right ansible_port.
+  - name: Ensure we use the configured SSH port for the remainder of the role
+    set_fact:
+      ansible_port: "{{ ssh_port }}"
+# end block ssh-server-config
+
+
+- name: "install and configure firewall (ufw)"
+  include_role:
+    name: weareinteractive.ufw

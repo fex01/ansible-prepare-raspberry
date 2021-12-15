@@ -1,0 +1,9 @@
+---
+roles:
+  - name: arillso.localization
+  - src: https://github.com/weareinteractive/ansible-apt
+    name: weareinteractive.apt
+  - src: https://github.com/weareinteractive/ansible-users
+    name: weareinteractive.users
+  - src: https://github.com/weareinteractive/ansible-ufw
+    name: weareinteractive.ufw
