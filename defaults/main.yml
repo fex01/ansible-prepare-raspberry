@@ -1,7 +1,9 @@
 ---
 # defaults file for prepare-raspberry
-# These defaults mention only the most commonly overwritten variables of dependencies.
-# For additional options have a look into the dependency roles defaults.
+
+# [Mandatory] Public SSH Key of your Ansible machine
+# Necessary to provision root
+bootstrap_ssh_key:
 
 # rename-user
 # Change to the username of your choice
@@ -53,7 +55,8 @@ ssh_port: 22
 # Required field, list of ssh public keys to update ~/.authorized_keys. 
 # Note: If you don't provision your user with keys, your user will no longer be able to access the host via SSH.
 # !!!The first key has to be the key ansible is using!!!
-ssh_public_keys: []
+ssh_public_keys:
+  - "{{ bootstrap_ssh_key }}"
 # String to present when connecting to host over ssh
 ssh_banner: "Welcome to {{ user_name }}'s {{ host_name }} server\n"
 # Basic sshd config will be done, use this to set additional values.
