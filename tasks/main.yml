@@ -101,15 +101,15 @@
 
 - name: provision root
   block:
-  - name: fail if ssh_public_keys is empty
+  - name: fail if bootstrap_ssh_key is undefined
     fail:
-      msg: ssh_public_keys is empty!
-    when: ssh_public_keys | length == 0
+      msg: bootstrap_ssh_key is undefined!
+    when: bootstrap_ssh_key is undefined
 
   - name: provision root with ssh key
     authorized_key:
       user: root
-      key: '{{ ssh_public_keys | first }}'
+      key: '{{ bootstrap_ssh_key }}'
 # end block provision root
 
 
