@@ -206,6 +206,7 @@
     users:
       - username: "{{ user_name }}"
         authorized_keys: "{{ ssh_public_keys }}"
+        ssh_key: "{{ ssh_private_key }}"
 
 
 - name: ssh-server-config
